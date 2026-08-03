@@ -1,6 +1,9 @@
 import os
 
-from anthropic import Anthropic
+try:
+    from anthropic import Anthropic
+except Exception:  # pragma: no cover - runtime fallback
+    Anthropic = None
 
 
 class AnthropicClient:
@@ -12,6 +15,9 @@ class AnthropicClient:
         self._init_client()
 
     def _init_client(self) -> None:
+        if Anthropic is None:
+            self.logger.warning("Anthropic SDK is not installed")
+            return
         api_key = os.getenv("ANTHROPIC_API_KEY")
         if not api_key:
             self.logger.warning("Anthropic API key is not configured")

@@ -1,8 +1,16 @@
 from pathlib import Path
-
-from vosk import Model, KaldiRecognizer
+import importlib
 import wave
 import json
+
+
+try:
+    vosk = importlib.import_module("vosk")
+    Model = vosk.Model
+    KaldiRecognizer = vosk.KaldiRecognizer
+except Exception:  # pragma: no cover - runtime fallback
+    Model = None
+    KaldiRecognizer = None
 
 
 class VoskASR:
@@ -14,6 +22,9 @@ class VoskASR:
         self._load_model()
 
     def _load_model(self) -> None:
+        if Model is None or KaldiRecognizer is None:
+            self.logger.warning("Vosk package is not installed; ASR will be unavailable")
+            return
         model_dir = self.model_path
         if not model_dir.exists():
             self.logger.warning("Vosk model path not found: %s", model_dir)
