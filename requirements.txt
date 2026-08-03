@@ -1,0 +1,6 @@
+anthropic>=0.45.0
+numpy>=1.26.0
+PyYAML>=6.0.2
+RPi.GPIO>=0.7.1
+sounddevice>=0.4.7
+vosk>=0.3.45
