@@ -2,6 +2,8 @@
 
 JARVIS Pocket AI Assistant is a portable, offline-first voice assistant for Raspberry Pi Zero 2W with the Whisplay HAT. It uses Vosk for local speech recognition, Anthropic Claude for cloud reasoning, and Piper for local speech synthesis. The experience is designed to be compact, low-power, and resilient when WiFi or cloud connectivity is limited.
 
+The assistant can optionally publish display updates to a Whisplay-compatible daemon when one is available on the Pi. If no daemon is reachable, it falls back to local console logging and the existing standalone behavior.
+
 ## 1. Raspberry Pi Zero 2W analysis
 
 The Raspberry Pi Zero 2W is a capable but memory-constrained device. The best choice for this project is Raspberry Pi OS Lite (64-bit) because it provides a small footprint and good compatibility with Pi hardware. The project is optimized for 512MB RAM by using small speech models, a compact LLM prompt, and lightweight audio processing.

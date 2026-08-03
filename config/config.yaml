@@ -16,6 +16,9 @@ assistant:
 
 hardware:
   display_enabled: true
+  whisplay_daemon_enabled: true
+  whisplay_daemon_url: "http://127.0.0.1:8080"
+  whisplay_daemon_timeout_seconds: 1.0
   button_gpio: 17
   led_gpio: 27
   mic_device_index: null

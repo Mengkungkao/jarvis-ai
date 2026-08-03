@@ -52,6 +52,7 @@ Restart=always
 RestartSec=5
 Environment=PYTHONUNBUFFERED=1
 Environment=JARVIS_HEADLESS=1
+Environment=WHISPLAY_DAEMON_URL=http://127.0.0.1:8080
 
 [Install]
 WantedBy=multi-user.target
