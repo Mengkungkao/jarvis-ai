@@ -115,3 +115,4 @@ To replace the Vosk model:
 - Keep the conversation history short to reduce memory use.
 - Disable wake-word detection unless it is required.
 - Use a smaller Vosk model when running on a Pi Zero 2W.
+# jarvis-ai
