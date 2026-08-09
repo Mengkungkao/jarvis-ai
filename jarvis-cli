@@ -1,0 +1,5 @@
+#!/usr/bin/env bash
+# JARVIS launcher. Symlink or alias this as `jarvis`:
+#   echo "alias jarvis='$(pwd)/jarvis-cli'" >> ~/.bashrc
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+exec python3 "$SCRIPT_DIR/run_jarvis.py" "$@"
