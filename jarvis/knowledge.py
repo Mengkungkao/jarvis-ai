@@ -141,7 +141,10 @@ def knowledge_context(query, store=None):
     except Exception as err:
         print("[RAG] knowledge search failed: %s" % err)
         return ""
-    threshold = score_threshold(store)
+    return context_from_results(results, score_threshold(store))
+
+
+def context_from_results(results, threshold):
     kept = [r for r in results if r["score"] >= threshold]
     if not kept:
         return ""

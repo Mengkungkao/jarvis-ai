@@ -3,3 +3,4 @@ data/
 __pycache__/
 *.pyc
 chatbot.log
+emotions/_default_*.gif

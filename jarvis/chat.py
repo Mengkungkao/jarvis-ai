@@ -17,7 +17,7 @@ Backends:
 import json
 import time
 
-from . import config, knowledge, memory, skills, tools
+from . import config, knowledge, memory, skills, tools, trace
 from .llm import OllamaLLM, TestLLM
 
 
@@ -37,9 +37,10 @@ def resolve_backend():
 
 
 class ChatSession:
-    def __init__(self, backend=None, quiet=False):
+    def __init__(self, backend=None, quiet=False, tracer=None):
         self.backend = backend or resolve_backend()
         self.quiet = quiet
+        self.trace = tracer or trace.default
         self.llm = None
         if self.backend == "ollama":
             self.llm = OllamaLLM()
@@ -90,24 +91,58 @@ class ChatSession:
             return ""
         self._maybe_reset_on_idle()
         self.last_message_time = time.time()
+        started = time.time()
+        self.trace.emit("ask", text=text, backend=self.backend)
 
         if self.backend == "extractive":
             answer = self._extractive_answer(text)
+            self.trace.emit(
+                "answer", text=answer,
+                seconds=round(time.time() - started, 2),
+            )
             if on_content:
                 on_content(answer)
             return answer
 
         # RAG: inject relevant knowledge for this question.
         if config.rag_enabled():
-            context = knowledge.knowledge_context(text, store=self.store)
+            context = self._rag_context(text)
             if context:
                 self.messages.append({"role": "system", "content": context})
 
         self.messages.append({"role": "user", "content": text})
-        return self._run_llm(
+        answer = self._run_llm(
             on_content, on_thinking, on_tool,
             round_index=0, seen_signatures=set(),
         )
+        self.trace.emit(
+            "answer", text=answer, seconds=round(time.time() - started, 2)
+        )
+        return answer
+
+    def _rag_context(self, query):
+        """Search once; feed both the trace and the injected context."""
+        try:
+            results = knowledge.search(query, store=self.store)
+        except Exception as err:
+            self.trace.emit("rag", query=query, error=str(err))
+            return ""
+        threshold = knowledge.score_threshold(self.store)
+        self.trace.emit(
+            "rag",
+            query=query,
+            threshold=threshold,
+            results=[
+                {
+                    "score": round(r["score"], 3),
+                    "source": r["payload"].get("source", "?"),
+                    "used": r["score"] >= threshold,
+                    "content": r["payload"].get("content", "")[:200],
+                }
+                for r in results
+            ],
+        )
+        return knowledge.context_from_results(results, threshold)
 
     # ── ollama/test agent loop ───────────────────────────────────
     def _run_llm(self, on_content, on_thinking, on_tool, round_index,
@@ -119,6 +154,14 @@ class ChatSession:
         )
         answer_parts = []
         tool_calls = []
+        llm_started = time.time()
+        self.trace.emit(
+            "llm_round",
+            round=round_index,
+            model=getattr(self.llm, "model", "?"),
+            messages=len(self.messages),
+            tools=use_tools,
+        )
         try:
             for event in self.llm.chat_stream(
                 self.messages,
@@ -136,11 +179,20 @@ class ChatSession:
         except Exception as err:
             error_text = "LLM error: %s" % err
             self._log("[chat] %s" % error_text)
+            self.trace.emit("llm_error", error=str(err))
             if on_content and not answer_parts:
                 on_content(error_text)
             return "".join(answer_parts) or error_text
 
         answer = "".join(answer_parts)
+        self.trace.emit(
+            "llm_done",
+            seconds=round(time.time() - llm_started, 2),
+            chars=len(answer),
+            tool_calls=[
+                c.get("function", {}).get("name", "?") for c in tool_calls
+            ],
+        )
         self.messages.append(
             {"role": "assistant", "content": answer}
             if not tool_calls
@@ -152,6 +204,7 @@ class ChatSession:
         # ── tool-loop protections, ported from ollama-llm.ts ─────
         if round_index >= config.max_tool_rounds():
             self._log("[chat] max tool rounds reached, forcing final answer")
+            self.trace.emit("forced_answer", reason="max_tool_rounds")
             return self._forced_answer(
                 "You have gathered enough tool results. Answer the user's "
                 "request now using what you already have. Do not call any "
@@ -165,6 +218,7 @@ class ChatSession:
         if duplicate:
             name = duplicate.get("function", {}).get("name", "tool")
             self._log("[chat] repeated %s call blocked" % name)
+            self.trace.emit("forced_answer", reason="duplicate_tool", tool=name)
             return self._forced_answer(
                 "The %s tool was already called with the same arguments. "
                 "Answer the user now from the results you already have, "
@@ -186,6 +240,8 @@ class ChatSession:
             func = self.tool_funcs.get(name)
             if on_tool:
                 on_tool(name)
+            self.trace.emit("tool_call", name=name, args=args)
+            tool_started = time.time()
             if func:
                 try:
                     result = func(args)
@@ -193,6 +249,12 @@ class ChatSession:
                     result = "Error executing %s: %s" % (name, err)
             else:
                 result = "Tool %s not found." % name
+            self.trace.emit(
+                "tool_result",
+                name=name,
+                seconds=round(time.time() - tool_started, 2),
+                result=result[:300],
+            )
             self._log("[tool] %s -> %s" % (name, result[:120].replace("\n", " ")))
             self.messages.append(
                 {"role": "tool", "content": result, "tool_name": name}
@@ -217,8 +279,23 @@ class ChatSession:
         try:
             results = knowledge.search(text, store=self.store)
         except Exception as err:
+            self.trace.emit("rag", query=text, error=str(err))
             return "Knowledge search failed: %s" % err
         threshold = knowledge.score_threshold(self.store)
+        self.trace.emit(
+            "rag",
+            query=text,
+            threshold=threshold,
+            results=[
+                {
+                    "score": round(r["score"], 3),
+                    "source": r["payload"].get("source", "?"),
+                    "used": r["score"] >= threshold,
+                    "content": r["payload"].get("content", "")[:200],
+                }
+                for r in results
+            ],
+        )
         kept = [r for r in results if r["score"] >= threshold]
         if not kept:
             hints = []

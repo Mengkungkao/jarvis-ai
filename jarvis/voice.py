@@ -25,7 +25,7 @@ import tempfile
 import time
 import urllib.request
 
-from . import config, whisplay_app
+from . import config, emotions, whisplay_app
 from .chat import ChatSession
 
 RECORD_ARGS = ["-f", "S16_LE", "-r", "16000", "-c", "1", "-t", "wav"]
@@ -225,20 +225,36 @@ def run_voice_loop(backend=None):
     def exiting():
         return hw_kind == "daemon" and board.exit_requested.is_set()
 
+    # Animated emotion faces when PIL is available; static fallback else.
+    animator = None
+    if board is not None and emotions.available():
+        blit = (
+            board.blit
+            if hw_kind == "daemon"
+            else lambda data: board.draw_image(
+                0, 0, whisplay_app.LCD_WIDTH, whisplay_app.LCD_HEIGHT, data
+            )
+        )
+        try:
+            animator = emotions.Animator(blit)
+        except Exception as err:
+            print("[voice] animations disabled: %s" % err)
+
     def show(status, text=""):
         if board is None:
             return
-        if hw_kind == "daemon":
+        # reaction emotions (happy/sad/...) reuse the answering LED color
+        led_key = status if status in whisplay_app.STATUS_STYLE else "answering"
+        led = whisplay_app.STATUS_STYLE[led_key][1]
+        try:
+            board.set_rgb(*led)
+        except Exception:
+            pass
+        if animator is not None:
+            animator.play(status, text)
+        elif hw_kind == "daemon":
             try:
                 board.show_status(status, text)
-            except Exception:
-                pass
-        else:
-            led = whisplay_app.STATUS_STYLE.get(
-                status, whisplay_app.STATUS_STYLE["idle"]
-            )[1]
-            try:
-                board.set_rgb(*led)
             except Exception:
                 pass
 
@@ -291,11 +307,13 @@ def run_voice_loop(backend=None):
             answer = session.ask(text)
             print("[jarvis] %s" % answer)
 
-            show("answering", answer)
+            # reaction face picked from emoji/sentiment in the reply
+            show(emotions.emotion_for_reply(answer), answer)
             if tts and answer:
+                speech = emotions.strip_emoji(answer)
                 out_wav = os.path.join(tmp_dir, "tts.wav")
                 try:
-                    tts(answer, out_wav)
+                    tts(speech, out_wav)
                     _aplay(out_wav)
                 except Exception as err:
                     print("[voice] TTS failed: %s" % err)
@@ -303,6 +321,8 @@ def run_voice_loop(backend=None):
     except KeyboardInterrupt:
         print("\n[voice] bye")
     finally:
+        if animator is not None:
+            animator.stop()
         if hw_kind == "daemon":
             board.cleanup()
         elif board is not None:

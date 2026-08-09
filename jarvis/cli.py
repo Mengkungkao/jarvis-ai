@@ -13,7 +13,7 @@ import argparse
 import os
 import sys
 
-from . import config, knowledge, memory, skills
+from . import config, knowledge, memory, skills, trace
 from .chat import ChatSession, resolve_backend
 from .llm import OllamaLLM
 
@@ -34,6 +34,8 @@ def _print_thinking(chunk):
 
 
 def _make_session(args):
+    if getattr(args, "debug", False):
+        trace.default.echo = True
     session = ChatSession(backend=args.backend)
     print("[jarvis] brain: %s" % session.backend, end="")
     if session.backend == "ollama":
@@ -162,7 +164,39 @@ def cmd_memory(args):
 def cmd_voice(args):
     from .voice import run_voice_loop
 
+    if getattr(args, "debug", False):
+        trace.default.echo = True
     return run_voice_loop(backend=args.backend)
+
+
+def cmd_debug(args):
+    from .debug_server import run_debug_server
+
+    return run_debug_server(
+        backend=args.backend, echo=getattr(args, "debug", False)
+    )
+
+
+def cmd_emotions(args):
+    from . import emotions
+
+    if not emotions.available():
+        print("PIL (pillow) is required for emotion animations: "
+              "pip3 install pillow --break-system-packages")
+        return 1
+    if args.export:
+        for name in emotions.EMOTIONS:
+            path = emotions.export_gif(name)
+            print("wrote %s" % path)
+        print("\nCopy one to emotions/<name>.gif and edit/replace it to "
+              "customize that state.")
+        return 0
+    custom_dir = emotions.emotions_dir()
+    for name in emotions.EMOTIONS:
+        custom = os.path.isfile(os.path.join(custom_dir, name + ".gif"))
+        print("%-10s %s" % (name, "custom GIF" if custom else "built-in"))
+    print("\nPreview them in the browser with: jarvis debug")
+    return 0
 
 
 def cmd_register_app(args):
@@ -204,6 +238,10 @@ def main(argv=None):
         default=None,
         help="override JARVIS_BACKEND for this run",
     )
+    parser.add_argument(
+        "--debug", action="store_true",
+        help="print pipeline trace events (RAG scores, tool calls, timings)",
+    )
     sub = parser.add_subparsers(dest="command")
 
     p_train = sub.add_parser("train", help="index knowledge/ files")
@@ -226,6 +264,14 @@ def main(argv=None):
         "--remove", action="store_true",
         help="delete the persisted daemon app entry",
     )
+    sub.add_parser(
+        "debug", help="web debug console (chat tester, trace, RAG inspector)"
+    )
+    p_emo = sub.add_parser("emotions", help="list emotion animations")
+    p_emo.add_argument(
+        "--export", action="store_true",
+        help="write the built-in animations as GIF files into emotions/",
+    )
 
     args = parser.parse_args(argv)
     if args.backend is None:
@@ -240,6 +286,8 @@ def main(argv=None):
         "memory": cmd_memory,
         "voice": cmd_voice,
         "register-app": cmd_register_app,
+        "debug": cmd_debug,
+        "emotions": cmd_emotions,
         None: cmd_chat,
     }
     try:

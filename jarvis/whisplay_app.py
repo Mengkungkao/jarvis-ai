@@ -334,6 +334,19 @@ class DaemonApp:
         self._fb.seek(0)
         self._fb.write(bytes([high, low]) * (LCD_WIDTH * LCD_HEIGHT))
 
+    def blit(self, data):
+        """Write one full 240x280 RGB565 frame into the framebuffer."""
+        if self._fb is None:
+            return
+        row_bytes = LCD_WIDTH * 2
+        if self._fb_stride == row_bytes:
+            self._fb[0:row_bytes * LCD_HEIGHT] = data[:row_bytes * LCD_HEIGHT]
+            return
+        for row in range(LCD_HEIGHT):
+            dst = row * self._fb_stride
+            src = row * row_bytes
+            self._fb[dst:dst + row_bytes] = data[src:src + row_bytes]
+
     def show_status(self, status, text=""):
         """Draw a status screen (PIL) or a plain status color without PIL,
         and set the matching LED color."""
@@ -347,9 +360,4 @@ class DaemonApp:
             color565 = ((r & 0xF8) << 8) | ((g & 0xFC) << 3) | (b >> 3)
             self.fill_screen(color565)
             return
-        data = image_to_rgb565(image)
-        row_bytes = LCD_WIDTH * 2
-        for row in range(LCD_HEIGHT):
-            dst = row * self._fb_stride
-            src = row * row_bytes
-            self._fb[dst:dst + row_bytes] = data[src:src + row_bytes]
+        self.blit(image_to_rgb565(image))

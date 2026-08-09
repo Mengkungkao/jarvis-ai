@@ -136,6 +136,37 @@ gracefully:
   in `.env`. The driver must be installed first
   (`sudo bash ~/Whisplay/install_driver.sh` + reboot).
 
+## Developing JARVIS: the debug console
+
+```bash
+./jarvis-cli debug          # then open http://127.0.0.1:17870
+```
+
+A zero-dependency web dashboard for tuning your training data and skills:
+a **chat tester** with live streamed answers, a **pipeline trace** showing
+every RAG query with per-chunk scores against the threshold, LLM rounds,
+tool calls with arguments/results and timings, a **RAG inspector** to try
+any query against the knowledge base, a **retrain button**, and live
+previews of all **emotion animations** exactly as the LCD shows them. Set
+`JARVIS_DEBUG_HOST=0.0.0.0` in `.env` to open the console for a Pi from
+your laptop. For terminal-only debugging, every command accepts `--debug`
+to print the same trace events inline:
+
+```bash
+./jarvis-cli --debug ask "what battery does my device use"
+```
+
+## Emotion faces
+
+During voice interaction the LCD shows an animated face per state:
+blinking **idle**, wide-eyed **listening** with sound waves, **thinking**
+dots, a talking **answering** mouth — and after each reply, a reaction
+face (**happy / sad / surprised / love / angry**) picked from emoji or
+sentiment words in the answer. Emoji are stripped before TTS so they are
+never read aloud. All faces are drawn procedurally (no assets); replace
+any of them with your own GIF at `emotions/<state>.gif` — see
+[emotions/README.md](emotions/README.md).
+
 ## Commands
 
 | Command | What it does |
@@ -148,6 +179,9 @@ gracefully:
 | `./jarvis-cli memory` | list facts (`--forget N`, `--clear`) |
 | `./jarvis-cli voice` | push-to-talk voice loop |
 | `./jarvis-cli register-app` | add JARVIS to the whisplay daemon desktop (`--remove` to undo) |
+| `./jarvis-cli debug` | web debug console (chat tester, trace, RAG inspector) |
+| `./jarvis-cli emotions` | list emotion animations (`--export` writes them as GIFs) |
+| `--debug` | print pipeline trace events with any command |
 | `--backend X` | force `ollama` / `extractive` / `test` for one run |
 
 ## Configuration
