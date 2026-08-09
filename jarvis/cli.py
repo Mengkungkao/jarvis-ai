@@ -10,6 +10,7 @@
 """
 
 import argparse
+import os
 import sys
 
 from . import config, knowledge, memory, skills
@@ -164,6 +165,34 @@ def cmd_voice(args):
     return run_voice_loop(backend=args.backend)
 
 
+def cmd_register_app(args):
+    from . import whisplay_app
+
+    if args.remove:
+        path = whisplay_app.persisted_app_file()
+        if os.path.isfile(path):
+            os.unlink(path)
+            print("Removed %s" % path)
+            print("Restart the daemon to update the desktop: "
+                  "sudo systemctl restart whisplay-daemon")
+        else:
+            print("No persisted app entry at %s" % path)
+        return 0
+    if not whisplay_app.daemon_available():
+        print(
+            "whisplay-daemon is not reachable at %s.\n"
+            "Start it first: sudo systemctl start whisplay-daemon"
+            % whisplay_app.SOCKET_PATH
+        )
+        return 1
+    whisplay_app.register_app()
+    print("Registered '%s' (%s) on the whisplay daemon desktop."
+          % (whisplay_app.DISPLAY_NAME, whisplay_app.APP_ID))
+    print("Long-press the button on the desktop to launch it; it runs:")
+    print("  %s" % whisplay_app.launch_command())
+    return 0
+
+
 def main(argv=None):
     parser = argparse.ArgumentParser(
         prog="jarvis",
@@ -190,6 +219,13 @@ def main(argv=None):
     p_mem.add_argument("--forget", type=int, metavar="N", help="forget fact N")
     p_mem.add_argument("--clear", action="store_true", help="forget everything")
     sub.add_parser("voice", help="voice loop (Whisplay HAT or terminal)")
+    p_reg = sub.add_parser(
+        "register-app", help="add JARVIS to the whisplay daemon desktop"
+    )
+    p_reg.add_argument(
+        "--remove", action="store_true",
+        help="delete the persisted daemon app entry",
+    )
 
     args = parser.parse_args(argv)
     if args.backend is None:
@@ -203,6 +239,7 @@ def main(argv=None):
         "skills": cmd_skills,
         "memory": cmd_memory,
         "voice": cmd_voice,
+        "register-app": cmd_register_app,
         None: cmd_chat,
     }
     try:

@@ -27,6 +27,18 @@ if [ "$answer" = "y" ] || [ "$answer" = "Y" ]; then
 fi
 
 echo
+if [ -S /tmp/whisplay-daemon.sock ]; then
+  read -r -p "-- register JARVIS on the whisplay daemon desktop? [y/N] " answer
+  if [ "$answer" = "y" ] || [ "$answer" = "Y" ]; then
+    python3 run_jarvis.py register-app
+    echo "   (skip the systemd service below — the daemon launches JARVIS)"
+  fi
+else
+  echo "-- whisplay-daemon not running: skipping desktop registration."
+  echo "   After starting the daemon, run: python3 run_jarvis.py register-app"
+fi
+
+echo
 read -r -p "-- install jarvis-voice systemd service (starts on boot)? [y/N] " answer
 if [ "$answer" = "y" ] || [ "$answer" = "Y" ]; then
   SERVICE_FILE=/etc/systemd/system/jarvis-voice.service

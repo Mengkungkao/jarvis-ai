@@ -93,6 +93,26 @@ Deploy = copy this folder to the Pi (only `jarvis/`, `knowledge/`,
 `bash setup_pi.sh` for audio packages, optional vosk ASR, and an optional
 systemd service that starts voice mode on boot.
 
+## Running as a whisplay-daemon app (recommended on the device)
+
+If the `whisplay-daemon` service manages your HAT, add JARVIS to its
+desktop launcher instead of running it standalone:
+
+```bash
+./jarvis-cli register-app        # once; persists in ~/.whisplay-daemon/app/
+./jarvis-cli register-app --remove   # to take it off the desktop again
+```
+
+JARVIS then appears as **JV / JARVIS** on the daemon desktop: single click
+cycles apps, **long press launches JARVIS**, and while it is foregrounded
+the button is push-to-talk. **Four rapid clicks exit** back to the desktop
+(the daemon's standard exit gesture). Voice mode auto-detects the daemon:
+it registers, acquires focus and the shared framebuffer, draws status
+screens (LISTENING / THINKING / ANSWERING plus the recognized text and
+answer) directly in RGB565, and drives the LED through the daemon —
+falling back to direct hardware access only when no daemon is running.
+Logs go to `~/.whisplay-daemon/daemon-app.log`.
+
 ## Voice mode (Whisplay HAT)
 
 ```bash
@@ -127,6 +147,7 @@ gracefully:
 | `./jarvis-cli skills` | list taught skills |
 | `./jarvis-cli memory` | list facts (`--forget N`, `--clear`) |
 | `./jarvis-cli voice` | push-to-talk voice loop |
+| `./jarvis-cli register-app` | add JARVIS to the whisplay daemon desktop (`--remove` to undo) |
 | `--backend X` | force `ollama` / `extractive` / `test` for one run |
 
 ## Configuration

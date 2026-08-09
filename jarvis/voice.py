@@ -25,10 +25,26 @@ import tempfile
 import time
 import urllib.request
 
-from . import config
+from . import config, whisplay_app
 from .chat import ChatSession
 
 RECORD_ARGS = ["-f", "S16_LE", "-r", "16000", "-c", "1", "-t", "wav"]
+
+
+def _load_hardware():
+    """Preferred: run as a whisplay-daemon foreground app. Fallbacks:
+    direct WhisplayBoard access, then plain terminal."""
+    if whisplay_app.daemon_available():
+        try:
+            app = whisplay_app.DaemonApp()
+            app.start()
+            return app, "daemon"
+        except Exception as err:
+            print("[voice] daemon mode failed (%s), trying direct access" % err)
+    board = _load_whisplay_board()
+    if board is not None:
+        return board, "direct"
+    return None, "terminal"
 
 
 # ── Whisplay HAT (optional) ──────────────────────────────────────────
@@ -191,32 +207,49 @@ def run_voice_loop(backend=None):
         print("[voice] arecord not found — install alsa-utils first.")
         return 1
 
-    board = _load_whisplay_board()
+    board, hw_kind = _load_hardware()
     asr, asr_name = _resolve_asr()
     tts, tts_name = _resolve_tts()
     session = ChatSession(backend=backend, quiet=True)
 
     print("[voice] brain: %s | asr: %s | tts: %s | whisplay: %s" % (
-        session.backend, asr_name, tts_name, "yes" if board else "no"))
+        session.backend, asr_name, tts_name, hw_kind))
     if board:
-        print("[voice] hold the Whisplay button to talk, Ctrl-C to quit.")
+        print("[voice] hold the button to talk"
+              + (", 4 rapid clicks to exit." if hw_kind == "daemon"
+                 else ", Ctrl-C to quit."))
     else:
         print("[voice] press Enter to start recording, Enter again to stop, "
               "Ctrl-C to quit.")
 
-    def led(r, g, b):
-        if board:
+    def exiting():
+        return hw_kind == "daemon" and board.exit_requested.is_set()
+
+    def show(status, text=""):
+        if board is None:
+            return
+        if hw_kind == "daemon":
             try:
-                board.set_rgb(r, g, b)
+                board.show_status(status, text)
+            except Exception:
+                pass
+        else:
+            led = whisplay_app.STATUS_STYLE.get(
+                status, whisplay_app.STATUS_STYLE["idle"]
+            )[1]
+            try:
+                board.set_rgb(*led)
             except Exception:
                 pass
 
     tmp_dir = tempfile.mkdtemp(prefix="jarvis-voice-")
     try:
-        while True:
-            led(0, 40, 0)  # idle-ish green glow
+        while not exiting():
+            show("idle", "Hold the button and speak.")
             if board:
                 while not board.button_pressed():
+                    if exiting():
+                        raise KeyboardInterrupt
                     time.sleep(0.05)
             else:
                 try:
@@ -224,19 +257,25 @@ def run_voice_loop(backend=None):
                 except EOFError:
                     break
 
-            led(0, 255, 0)  # listening
+            show("listening", "Speak now, release to stop.")
             wav_path = os.path.join(tmp_dir, "rec-%d.wav" % int(time.time()))
             ok = _record_push_to_talk(board, wav_path)
             if not ok:
                 print("[voice] recording too short, try again")
+                # if recording failed while the button is still held (e.g.
+                # bad ALSA device), wait for release to avoid a tight loop
+                while board and board.button_pressed() and not exiting():
+                    time.sleep(0.05)
                 continue
 
-            led(255, 180, 0)  # thinking
+            show("thinking", "Recognizing speech...")
             if asr:
                 try:
                     text = asr(wav_path)
                 except Exception as err:
                     print("[voice] ASR failed: %s" % err)
+                    show("error", "Speech recognition failed.")
+                    time.sleep(1.5)
                     continue
             else:
                 try:
@@ -248,10 +287,11 @@ def run_voice_loop(backend=None):
             if not text:
                 continue
 
+            show("thinking", text)
             answer = session.ask(text)
             print("[jarvis] %s" % answer)
 
-            led(0, 80, 255)  # answering
+            show("answering", answer)
             if tts and answer:
                 out_wav = os.path.join(tmp_dir, "tts.wav")
                 try:
@@ -263,6 +303,12 @@ def run_voice_loop(backend=None):
     except KeyboardInterrupt:
         print("\n[voice] bye")
     finally:
-        led(0, 0, 0)
+        if hw_kind == "daemon":
+            board.cleanup()
+        elif board is not None:
+            try:
+                board.set_rgb(0, 0, 0)
+            except Exception:
+                pass
         shutil.rmtree(tmp_dir, ignore_errors=True)
     return 0
