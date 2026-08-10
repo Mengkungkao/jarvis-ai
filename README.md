@@ -181,10 +181,12 @@ to print the same trace events inline:
 
 ## Emotion faces
 
-During voice interaction the LCD shows an animated face per state:
-blinking **idle**, wide-eyed **listening** with sound waves, **thinking**
-dots, a talking **answering** mouth — and after each reply, a reaction
-face (**happy / sad / surprised / love / angry**) picked from emoji or
+During voice interaction the LCD shows an animated face per state, in
+one of two styles (`JARVIS_FACE_STYLE`): **emo** (default) — big glowing
+eyes on a black screen in the style of the EMO desktop robot, with
+blinks, crescent smiles, heart eyes, and listening equalizer bars — or
+**classic** round smiley faces. After each reply a reaction face
+(**happy / sad / surprised / love / angry**) is picked from emoji or
 sentiment words in the answer. Emoji are stripped before TTS so they are
 never read aloud. All faces are drawn procedurally (no assets); replace
 any of them with your own GIF at `emotions/<state>.gif` — see

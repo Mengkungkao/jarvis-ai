@@ -266,10 +266,195 @@ def _heart(draw, x, y, size, color):
     )
 
 
+# ── EMO-style face: big glowing eyes on a near-black screen ──────────
+EMO_BG = (6, 8, 14)
+EMO_COLORS = {
+    "idle": (95, 225, 255),
+    "listening": (120, 255, 205),
+    "thinking": (255, 215, 130),
+    "answering": (100, 195, 255),
+    "happy": (130, 245, 255),
+    "sad": (115, 155, 255),
+    "surprised": (210, 235, 255),
+    "love": (255, 125, 175),
+    "angry": (255, 115, 85),
+    "error": (255, 95, 95),
+}
+
+
+def _emo_frame(emotion, phase):
+    """One EMO-style frame: everything is said with two glowing eyes."""
+    import math
+
+    from PIL import Image, ImageDraw, ImageFilter
+
+    color = EMO_COLORS.get(emotion, EMO_COLORS["idle"])
+    frame = Image.new("RGB", (LCD_WIDTH, FACE_HEIGHT), EMO_BG)
+    mask = Image.new("L", (LCD_WIDTH, FACE_HEIGHT), 0)
+    draw = ImageDraw.Draw(mask)
+
+    cx = LCD_WIDTH // 2
+    eye_y = FACE_HEIGHT // 2 + 2
+    spacing = 60  # center offset of each eye from the middle
+    w, h = 52, 68  # base eye size
+    bob = math.sin(2 * math.pi * phase) * 3
+    wave = math.sin(2 * math.pi * phase)
+    tear_xy = None
+    draw_highlight = True
+
+    def eye_box(side, ww, hh, dx=0, dy=0):
+        ex = cx + side * spacing + dx
+        ey = eye_y + dy + bob
+        return (ex - ww / 2, ey - hh / 2, ex + ww / 2, ey + hh / 2)
+
+    def rounded(box, radius=None):
+        radius = radius if radius is not None else min(
+            box[2] - box[0], box[3] - box[1]
+        ) / 2.6
+        draw.rounded_rectangle(box, radius=radius, fill=255)
+
+    if emotion == "idle":
+        # calm gaze with a quick blink at the end of the loop
+        blink = max(0.12, min(1.0, abs(phase - 0.92) / 0.08)) if phase > 0.84 else 1.0
+        rounded(eye_box(-1, w, h * blink))
+        rounded(eye_box(1, w, h * blink))
+        draw_highlight = blink > 0.6
+    elif emotion == "listening":
+        grow = 1.08 + 0.06 * wave
+        rounded(eye_box(-1, w * grow, h * grow))
+        rounded(eye_box(1, w * grow, h * grow))
+        # little equalizer bars under the eyes
+        for i in range(3):
+            bh = 6 + 10 * abs(math.sin(2 * math.pi * (phase + i / 3.0)))
+            bx = cx - 20 + i * 20
+            by = FACE_HEIGHT - 18
+            draw.rounded_rectangle(
+                (bx - 4, by - bh, bx + 4, by), radius=4, fill=255
+            )
+    elif emotion == "thinking":
+        # narrowed eyes drifting up and to the side
+        drift = 8 * math.sin(2 * math.pi * phase / 2)
+        rounded(eye_box(-1, w * 0.9, h * 0.55, dx=8 + drift, dy=-10))
+        rounded(eye_box(1, w * 0.9, h * 0.55, dx=8 + drift, dy=-10))
+    elif emotion == "answering":
+        talk = 0.75 + 0.25 * abs(math.sin(2 * math.pi * phase * 2))
+        rounded(eye_box(-1, w, h * talk))
+        rounded(eye_box(1, w, h * talk))
+    elif emotion == "happy":
+        # smiling crescent eyes: full eye with the lower half carved away
+        rounded(eye_box(-1, w * 1.05, h))
+        rounded(eye_box(1, w * 1.05, h))
+        for side in (-1, 1):
+            ex = cx + side * spacing
+            ey = eye_y + bob
+            draw.ellipse(
+                (ex - w, ey - h * 0.05, ex + w, ey + h), fill=0
+            )
+        draw_highlight = False
+    elif emotion == "sad":
+        # droopy eyes tilted outward, plus a falling tear
+        for side in (-1, 1):
+            eye = Image.new("L", (w * 2, h * 2), 0)
+            ImageDraw.Draw(eye).rounded_rectangle(
+                (w // 2, h // 2, w // 2 + w, h // 2 + int(h * 0.8)),
+                radius=w // 2.6, fill=255,
+            )
+            eye = eye.rotate(-14 * side, resample=Image.BILINEAR)
+            mask.paste(
+                eye,
+                (int(cx + side * spacing - w), int(eye_y + bob - h + 6)),
+                eye,
+            )
+        tear_xy = (cx - spacing - 8, eye_y + 26 + int(30 * phase))
+        draw_highlight = False
+    elif emotion == "surprised":
+        r = (h * 0.62) * (1.0 + 0.08 * abs(wave))
+        for side in (-1, 1):
+            ex = cx + side * spacing
+            draw.ellipse(
+                (ex - r, eye_y + bob - r, ex + r, eye_y + bob + r), fill=255
+            )
+    elif emotion == "love":
+        beat = 1.0 + 0.12 * abs(math.sin(2 * math.pi * phase))
+        for side in (-1, 1):
+            ex = cx + side * spacing
+            ey = eye_y + bob
+            s = int(30 * beat)
+            half = s // 2
+            draw.ellipse((ex - s, ey - half - s // 2, ex, ey + half - s // 2),
+                         fill=255)
+            draw.ellipse((ex, ey - half - s // 2, ex + s, ey + half - s // 2),
+                         fill=255)
+            draw.polygon(
+                (ex - s, ey - s // 6, ex + s, ey - s // 6, ex, ey + s),
+                fill=255,
+            )
+        draw_highlight = False
+    elif emotion == "angry":
+        # slanted eyes, inner corners pulled down
+        for side in (-1, 1):
+            ex = cx + side * spacing
+            ey = eye_y + bob
+            inner, outer = ex - side * w / 2, ex + side * w / 2
+            draw.polygon(
+                (
+                    (inner, ey - h * 0.12),
+                    (outer, ey - h * 0.42),
+                    (outer, ey + h * 0.40),
+                    (inner, ey + h * 0.40),
+                ),
+                fill=255,
+            )
+        draw_highlight = False
+    elif emotion == "error":
+        # dizzy X eyes with a flicker
+        if int(phase * 8) % 4 != 3:
+            for side in (-1, 1):
+                ex = cx + side * spacing
+                ey = eye_y + bob
+                for a, b in ((-1, -1), (-1, 1)):
+                    draw.line(
+                        (ex + a * 22, ey + b * 22, ex - a * 22, ey - b * 22),
+                        fill=255, width=13,
+                    )
+        draw_highlight = False
+    else:
+        rounded(eye_box(-1, w, h))
+        rounded(eye_box(1, w, h))
+
+    # glow: soft halo + anti-aliased core
+    halo = mask.filter(ImageFilter.GaussianBlur(12))
+    core = mask.filter(ImageFilter.GaussianBlur(1.2))
+    frame.paste(Image.new("RGB", frame.size, tuple(c // 3 for c in color)),
+                (0, 0), halo)
+    frame.paste(Image.new("RGB", frame.size, color), (0, 0), core)
+
+    extra = ImageDraw.Draw(frame)
+    if draw_highlight:
+        # tiny white sparkle in each eye = instant cuteness
+        for side in (-1, 1):
+            hx = cx + side * spacing - w // 5
+            hy = eye_y + bob - h // 4
+            extra.ellipse((hx - 6, hy - 7, hx + 6, hy + 7),
+                          fill=(245, 252, 255))
+    if tear_xy is not None:
+        tx, ty = tear_xy
+        extra.ellipse((tx - 5, ty, tx + 5, ty + 13), fill=(140, 200, 255))
+
+    return frame
+
+
 FRAME_COUNTS = {"idle": 10}
 DEFAULT_FRAMES = 8
 FRAME_MS = {"idle": 180}
 DEFAULT_FRAME_MS = 120
+
+
+def style_bg(emotion):
+    """Screen background for the active face style."""
+    if config.face_style() == "classic":
+        return PALETTE.get(emotion, PALETTE["idle"])[0]
+    return EMO_BG
 
 
 def build_face_frames(emotion):
@@ -281,8 +466,9 @@ def build_face_frames(emotion):
             return frames
     count = FRAME_COUNTS.get(emotion, DEFAULT_FRAMES)
     ms = FRAME_MS.get(emotion, DEFAULT_FRAME_MS)
+    render = _face_frame if config.face_style() == "classic" else _emo_frame
     return [
-        (_face_frame(emotion, i / float(count)), ms) for i in range(count)
+        (render(emotion, i / float(count)), ms) for i in range(count)
     ]
 
 
@@ -329,8 +515,7 @@ def compose_screen_frames(emotion, text=""):
     frames = []
     for face, ms in face_frames:
         screen = Image.new(
-            "RGB", (LCD_WIDTH, LCD_HEIGHT),
-            PALETTE.get(emotion, PALETTE["idle"])[0],
+            "RGB", (LCD_WIDTH, LCD_HEIGHT), style_bg(emotion)
         )
         screen.paste(face, (0, 0))
         if panel is not None:
@@ -344,7 +529,7 @@ def _text_panel(emotion, text):
 
     from .whisplay_app import _load_fonts
 
-    bg = PALETTE.get(emotion, PALETTE["idle"])[0]
+    bg = style_bg(emotion)
     panel = Image.new(
         "RGB", (LCD_WIDTH, LCD_HEIGHT - FACE_HEIGHT),
         tuple(min(255, c + 12) for c in bg),

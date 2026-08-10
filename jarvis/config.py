@@ -170,6 +170,11 @@ def chunk_overlap():
 
 
 # ── Memory ───────────────────────────────────────────────────────────
+def face_style():
+    """emo (big glowing eyes, EMO-robot style) | classic (round smiley)"""
+    return get("JARVIS_FACE_STYLE", "emo").strip().lower()
+
+
 def memory_enabled():
     return get_bool("MEMORY_ENABLED", True)
 

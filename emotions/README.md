@@ -1,5 +1,15 @@
 # Emotion animations
 
+Two built-in face styles, chosen with `JARVIS_FACE_STYLE` in `.env`:
+
+- **emo** (default) — big glowing eyes on a black screen, EMO-robot
+  style: everything is expressed through eye shape and motion (blinks,
+  crescent smiles, heart eyes, droopy tear, equalizer bars while
+  listening, flickering X eyes on error).
+- **classic** — round smiley faces with colored backgrounds.
+
+Preview both live in the browser with `./jarvis-cli debug`.
+
 JARVIS shows an animated face for each state on the Whisplay LCD:
 
 | name | shown when |
