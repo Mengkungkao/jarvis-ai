@@ -44,7 +44,7 @@ class OllamaLLM:
         except Exception:
             return False
 
-    def chat_stream(self, messages, tools=None, think=False):
+    def _open_chat(self, messages, tools, think):
         payload = {
             "model": self.model,
             "messages": messages,
@@ -60,13 +60,34 @@ class OllamaLLM:
             data=json.dumps(payload).encode("utf-8"),
             headers={"Content-Type": "application/json"},
         )
+        return urllib.request.urlopen(req, timeout=600)
+
+    def chat_stream(self, messages, tools=None, think=False):
         try:
-            resp = urllib.request.urlopen(req, timeout=600)
+            resp = self._open_chat(messages, tools, think)
         except urllib.error.HTTPError as err:
             body = err.read().decode("utf-8", "replace")[:400]
-            raise RuntimeError(
-                "Ollama chat failed (%d): %s" % (err.code, body)
-            )
+            if think and "does not support thinking" in body:
+                # Model doesn't support Ollama's thinking mode (e.g.
+                # ENABLE_THINKING=true with a non-reasoning model like
+                # qwen2.5) — retry once without it instead of failing
+                # the whole conversation turn.
+                print(
+                    "[ollama] model '%s' doesn't support thinking mode; "
+                    "retrying without it. Set ENABLE_THINKING=false to "
+                    "avoid this warning." % self.model
+                )
+                try:
+                    resp = self._open_chat(messages, tools, False)
+                except urllib.error.HTTPError as err2:
+                    body2 = err2.read().decode("utf-8", "replace")[:400]
+                    raise RuntimeError(
+                        "Ollama chat failed (%d): %s" % (err2.code, body2)
+                    )
+            else:
+                raise RuntimeError(
+                    "Ollama chat failed (%d): %s" % (err.code, body)
+                )
         with resp:
             for raw in resp:
                 line = raw.decode("utf-8", "replace").strip()
