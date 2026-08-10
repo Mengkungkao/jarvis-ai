@@ -17,13 +17,25 @@ if [ ! -f .env ]; then
 fi
 
 echo
-echo "-- optional: offline speech recognition (vosk, ~40MB model)"
-read -r -p "   Install vosk ASR? [y/N] " answer
-if [ "$answer" = "y" ] || [ "$answer" = "Y" ]; then
+echo "-- offline speech recognition (vosk + small English model, ~40MB)"
+read -r -p "   Install vosk ASR now? [Y/n] " answer
+if [ "$answer" != "n" ] && [ "$answer" != "N" ]; then
   pip3 install vosk --break-system-packages
-  echo "   Download a small model from https://alphacephei.com/vosk/models"
-  echo "   e.g. vosk-model-small-en-us-0.15, unzip it, and set"
-  echo "   VOSK_MODEL_PATH in .env"
+  MODEL_DIR="$HOME/vosk-model-small-en-us-0.15"
+  if [ ! -d "$MODEL_DIR" ]; then
+    echo "   downloading English model to $MODEL_DIR ..."
+    curl -L -o /tmp/vosk-model.zip \
+      https://alphacephei.com/vosk/models/vosk-model-small-en-us-0.15.zip
+    python3 -c "import zipfile; zipfile.ZipFile('/tmp/vosk-model.zip').extractall('$HOME')"
+    rm -f /tmp/vosk-model.zip
+  fi
+  if grep -q "^VOSK_MODEL_PATH=" .env 2>/dev/null; then
+    sed -i "s|^VOSK_MODEL_PATH=.*|VOSK_MODEL_PATH=$MODEL_DIR|" .env
+  else
+    printf "\nVOSK_MODEL_PATH=%s\n" "$MODEL_DIR" >> .env
+  fi
+  echo "   VOSK_MODEL_PATH set in .env"
+  echo "   verify the whole pipeline with: python3 run_jarvis.py mic-test"
 fi
 
 echo

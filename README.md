@@ -136,6 +136,29 @@ gracefully:
   in `.env`. The driver must be installed first
   (`sudo bash ~/Whisplay/install_driver.sh` + reboot).
 
+## Speech recognition not working?
+
+Voice mode needs an ASR engine — without one it says `asr: typed input`
+at startup and cannot understand speech at all. On the Pi:
+
+```bash
+bash setup_pi.sh          # installs vosk + downloads the English model
+                          # and sets VOSK_MODEL_PATH in .env automatically
+./jarvis-cli mic-test     # then verify the whole pipeline
+```
+
+`mic-test` checks each stage separately: records 4 seconds, reports the
+**peak input level** (0 = wrong ALSA device, very low = raise capture
+volume in `alsamixer`), plays the recording back, then runs recognition
+with timing and prints exactly what was understood. You can also re-test
+a saved recording with `./jarvis-cli mic-test --file some.wav`. JARVIS
+keeps the vosk model loaded in memory, so recognition is slow only on
+the first utterance after start. Alternative to vosk: run a whisper HTTP
+server on a LAN machine and set `WHISPER_HTTP_URL` in `.env`. During
+`jarvis voice`, every interaction now prints the recorded duration, peak
+level, ASR latency, and recognized text — and `--debug` adds the full
+pipeline trace.
+
 ## Developing JARVIS: the debug console
 
 ```bash
@@ -181,6 +204,7 @@ any of them with your own GIF at `emotions/<state>.gif` — see
 | `./jarvis-cli register-app` | add JARVIS to the whisplay daemon desktop (`--remove` to undo) |
 | `./jarvis-cli debug` | web debug console (chat tester, trace, RAG inspector) |
 | `./jarvis-cli emotions` | list emotion animations (`--export` writes them as GIFs) |
+| `./jarvis-cli mic-test` | diagnose recording + speech recognition step by step |
 | `--debug` | print pipeline trace events with any command |
 | `--backend X` | force `ollama` / `extractive` / `test` for one run |
 

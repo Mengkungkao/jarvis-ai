@@ -25,8 +25,27 @@ import tempfile
 import time
 import urllib.request
 
-from . import config, emotions, whisplay_app
+from . import config, emotions, trace, whisplay_app
 from .chat import ChatSession
+
+
+def _wav_stats(wav_path):
+    """(duration_sec, peak_amplitude 0..32767) — peak near zero means the
+    microphone recorded silence."""
+    import array
+    import wave
+
+    try:
+        with wave.open(wav_path, "rb") as wf:
+            frames = wf.getnframes()
+            rate = wf.getframerate() or 16000
+            data = wf.readframes(frames)
+        samples = array.array("h")
+        samples.frombytes(data[: len(data) // 2 * 2])
+        peak = max((abs(s) for s in samples), default=0)
+        return frames / float(rate), peak
+    except Exception:
+        return 0.0, 0
 
 RECORD_ARGS = ["-f", "S16_LE", "-r", "16000", "-c", "1", "-t", "wav"]
 
@@ -74,21 +93,67 @@ def _load_whisplay_board():
 
 
 # ── ASR backends ─────────────────────────────────────────────────────
-def _asr_vosk(wav_path):
-    out_path = wav_path + ".txt"
-    cmd = ["vosk-transcriber", "-i", wav_path, "-o", out_path]
+_vosk_model = None
+
+
+def _load_vosk_model():
+    """Load the vosk model once and keep it — reloading per utterance
+    (what the CLI does) costs 10s+ on a Pi Zero 2W."""
+    global _vosk_model
+    if _vosk_model is not None:
+        return _vosk_model
+    from vosk import Model, SetLogLevel
+
+    SetLogLevel(-1)
+    path = config.vosk_model_path()
+    started = time.time()
+    if path:
+        if not os.path.isdir(path):
+            raise RuntimeError(
+                "VOSK_MODEL_PATH does not exist: %s" % path
+            )
+        print("[asr] loading vosk model from %s ..." % path)
+        _vosk_model = Model(path)
+    else:
+        print("[asr] VOSK_MODEL_PATH not set — using/downloading the "
+              "default en-us model (set the path in .env for offline use)")
+        _vosk_model = Model(lang="en-us")
+    print("[asr] vosk model ready in %.1fs" % (time.time() - started))
+    return _vosk_model
+
+
+def _asr_vosk_python(wav_path):
+    import json as _json
+    import wave
+
+    from vosk import KaldiRecognizer
+
+    model = _load_vosk_model()
+    with wave.open(wav_path, "rb") as wf:
+        rec = KaldiRecognizer(model, wf.getframerate())
+        while True:
+            data = wf.readframes(4000)
+            if not data:
+                break
+            rec.AcceptWaveform(data)
+    result = _json.loads(rec.FinalResult())
+    return (result.get("text") or "").strip()
+
+
+def _asr_vosk_cli(wav_path):
+    cmd = ["vosk-transcriber"]
     if config.vosk_model_path():
         cmd += ["--model", config.vosk_model_path()]
-    subprocess.run(
-        cmd, check=True,
-        stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+    cmd += ["--input", wav_path]
+    proc = subprocess.run(
+        cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=300
     )
-    try:
-        with open(out_path, "r", encoding="utf-8") as fh:
-            return fh.read().strip()
-    finally:
-        if os.path.exists(out_path):
-            os.unlink(out_path)
+    if proc.returncode != 0:
+        raise RuntimeError(
+            "vosk-transcriber failed: %s"
+            % proc.stderr.decode("utf-8", "replace")[-200:]
+        )
+    return proc.stdout.decode("utf-8", "replace").strip()
 
 
 def _asr_whisper_http(wav_path):
@@ -106,13 +171,27 @@ def _asr_whisper_http(wav_path):
 
 
 def _resolve_asr():
+    """Pick a speech recognizer. Preference: in-process vosk (model kept
+    loaded), vosk CLI, whisper-http server. Loud about what failed."""
     choice = config.asr_backend()
     if choice == "none":
         return None, "typed input"
-    if choice == "vosk" or (
-        choice == "auto" and shutil.which("vosk-transcriber")
-    ):
-        return _asr_vosk, "vosk"
+    if choice in ("vosk", "auto"):
+        try:
+            import vosk  # noqa: F401
+
+            _load_vosk_model()
+            return _asr_vosk_python, "vosk"
+        except ImportError:
+            if choice == "vosk":
+                print("[asr] python module 'vosk' not installed "
+                      "(pip3 install vosk --break-system-packages)")
+        except Exception as err:
+            print("[asr] vosk unavailable: %s" % err)
+        if shutil.which("vosk-transcriber"):
+            return _asr_vosk_cli, "vosk-cli"
+        if choice == "vosk":
+            return None, "typed input"
     if choice in ("whisper-http", "auto"):
         try:
             urllib.request.urlopen(config.whisper_http_url(), timeout=2)
@@ -120,7 +199,7 @@ def _resolve_asr():
         except Exception:
             if choice == "whisper-http":
                 print(
-                    "[voice] whisper-http not reachable at %s"
+                    "[asr] whisper-http not reachable at %s"
                     % config.whisper_http_url()
                 )
     return None, "typed input"
@@ -201,6 +280,77 @@ def _record_push_to_talk(board, wav_path):
     return os.path.isfile(wav_path) and os.path.getsize(wav_path) > 1024
 
 
+# ── mic test ─────────────────────────────────────────────────────────
+def run_mic_test(seconds=4, wav_file=None):
+    """Diagnose the speech pipeline step by step: record -> level check
+    -> playback -> speech recognition. `jarvis mic-test`."""
+    print("== JARVIS microphone / speech test ==")
+    asr, asr_name = _resolve_asr()
+    print("speech recognizer: %s" % asr_name)
+    if asr is None:
+        print("!! no ASR available — recognition will be skipped.")
+        print("   fix: pip3 install vosk --break-system-packages, then")
+        print("   download a model (bash setup_pi.sh) and set "
+              "VOSK_MODEL_PATH in .env")
+
+    if wav_file:
+        wav_path = wav_file
+        print("using existing file: %s" % wav_path)
+    else:
+        if not shutil.which("arecord"):
+            print("!! arecord not found — install alsa-utils")
+            return 1
+        device = config.alsa_input_device() or "(default)"
+        wav_path = os.path.join(
+            tempfile.gettempdir(), "jarvis-mic-test.wav"
+        )
+        print("recording %ds from ALSA device %s — speak now!"
+              % (seconds, device))
+        cmd = ["arecord", "-q"]
+        if config.alsa_input_device():
+            cmd += ["-D", config.alsa_input_device()]
+        cmd += RECORD_ARGS + ["-d", str(seconds), wav_path]
+        proc = subprocess.run(cmd, stderr=subprocess.PIPE)
+        if proc.returncode != 0:
+            print("!! arecord failed: %s"
+                  % proc.stderr.decode("utf-8", "replace").strip())
+            print("   list capture devices with: arecord -l")
+            return 1
+
+    duration, peak = _wav_stats(wav_path)
+    size = os.path.getsize(wav_path) if os.path.isfile(wav_path) else 0
+    print("recorded: %.1fs, %d bytes, peak level %d/32767"
+          % (duration, size, peak))
+    if peak == 0:
+        print("!! completely silent — wrong capture device? try: "
+              "arecord -l, then set ALSA_INPUT_DEVICE in .env")
+    elif peak < 500:
+        print("!! very low level — raise capture volume with alsamixer "
+              "(F4 for capture) or get closer to the mic")
+    else:
+        print("   level looks OK")
+
+    if not wav_file and shutil.which("aplay"):
+        print("playing back — you should hear yourself...")
+        _aplay(wav_path)
+
+    if asr is not None:
+        print("recognizing...")
+        started = time.time()
+        try:
+            text = asr(wav_path)
+        except Exception as err:
+            print("!! recognition failed: %s" % err)
+            return 1
+        print("asr (%s) took %.1fs" % (asr_name, time.time() - started))
+        print("recognized: %r" % text)
+        if not text:
+            print("!! nothing recognized — if the level was OK, make sure "
+                  "the model language matches (English model: "
+                  "vosk-model-small-en-us-0.15)")
+    return 0
+
+
 # ── main loop ────────────────────────────────────────────────────────
 def run_voice_loop(backend=None):
     if not shutil.which("arecord"):
@@ -214,6 +364,30 @@ def run_voice_loop(backend=None):
 
     print("[voice] brain: %s | asr: %s | tts: %s | whisplay: %s" % (
         session.backend, asr_name, tts_name, hw_kind))
+    if asr is None and config.asr_backend() != "none":
+        print(
+            "[voice] *** NO SPEECH RECOGNITION AVAILABLE ***\n"
+            "[voice] install offline ASR on this device with:\n"
+            "[voice]   pip3 install vosk --break-system-packages\n"
+            "[voice]   then download a model (bash setup_pi.sh does both)\n"
+            "[voice] or point WHISPER_HTTP_URL at a whisper server on "
+            "your LAN."
+        )
+        if not sys.stdin.isatty():
+            # daemon-launched with no terminal: typing is impossible,
+            # show the problem on screen instead of dying silently
+            if board is not None and hw_kind == "daemon":
+                try:
+                    board.show_status(
+                        "error", "No speech recognition installed. "
+                        "Run: bash setup_pi.sh"
+                    )
+                except Exception:
+                    pass
+                time.sleep(8)
+            if hw_kind == "daemon":
+                board.cleanup()
+            return 1
     if board:
         print("[voice] hold the button to talk"
               + (", 4 rapid clicks to exit." if hw_kind == "daemon"
@@ -284,15 +458,32 @@ def run_voice_loop(backend=None):
                     time.sleep(0.05)
                 continue
 
+            duration, peak = _wav_stats(wav_path)
+            print("[voice] recorded %.1fs, peak level %d/32767%s" % (
+                duration, peak,
+                "  (very low — check mic / alsamixer capture volume)"
+                if peak < 500 else ""))
+            trace.default.emit(
+                "record", seconds=round(duration, 2), peak=peak
+            )
+
             show("thinking", "Recognizing speech...")
             if asr:
+                asr_started = time.time()
                 try:
                     text = asr(wav_path)
                 except Exception as err:
                     print("[voice] ASR failed: %s" % err)
+                    trace.default.emit("asr", error=str(err))
                     show("error", "Speech recognition failed.")
                     time.sleep(1.5)
                     continue
+                asr_seconds = time.time() - asr_started
+                print("[voice] asr (%s) took %.1fs" % (asr_name, asr_seconds))
+                trace.default.emit(
+                    "asr", backend=asr_name,
+                    seconds=round(asr_seconds, 2), text=text,
+                )
             else:
                 try:
                     text = input("[voice] (no ASR) type what you said> ")
@@ -301,6 +492,10 @@ def run_voice_loop(backend=None):
             text = text.strip()
             print("[you] %s" % text)
             if not text:
+                print("[voice] heard nothing — speak while holding the "
+                      "button, closer to the microphone")
+                show("error", "I heard nothing. Hold the button and speak.")
+                time.sleep(1.5)
                 continue
 
             show("thinking", text)

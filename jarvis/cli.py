@@ -169,6 +169,14 @@ def cmd_voice(args):
     return run_voice_loop(backend=args.backend)
 
 
+def cmd_mic_test(args):
+    from .voice import run_mic_test
+
+    if getattr(args, "debug", False):
+        trace.default.echo = True
+    return run_mic_test(seconds=args.seconds, wav_file=args.file)
+
+
 def cmd_debug(args):
     from .debug_server import run_debug_server
 
@@ -267,6 +275,16 @@ def main(argv=None):
     sub.add_parser(
         "debug", help="web debug console (chat tester, trace, RAG inspector)"
     )
+    p_mic = sub.add_parser(
+        "mic-test", help="diagnose recording + speech recognition"
+    )
+    p_mic.add_argument(
+        "--seconds", type=int, default=4, help="recording length (default 4)"
+    )
+    p_mic.add_argument(
+        "--file", default=None,
+        help="skip recording and recognize this wav file instead",
+    )
     p_emo = sub.add_parser("emotions", help="list emotion animations")
     p_emo.add_argument(
         "--export", action="store_true",
@@ -288,6 +306,7 @@ def main(argv=None):
         "register-app": cmd_register_app,
         "debug": cmd_debug,
         "emotions": cmd_emotions,
+        "mic-test": cmd_mic_test,
         None: cmd_chat,
     }
     try:
