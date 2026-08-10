@@ -544,68 +544,78 @@ def _load_gif_frames(path, emotion):
     return frames
 
 
-def compose_screen_frames(emotion, text=""):
-    """Full 240x280 frames: animated face on top, text panel below."""
-    from PIL import Image
-
-    from .whisplay_app import image_to_rgb565, render_status_frame  # noqa
-
-    face_frames = build_face_frames(emotion)
-    panel = _text_panel(emotion, text)
-    frames = []
-    for face, ms in face_frames:
-        screen = Image.new(
-            "RGB", (LCD_WIDTH, LCD_HEIGHT), style_bg(emotion)
-        )
-        screen.paste(face, (0, 0))
-        if panel is not None:
-            screen.paste(panel, (0, FACE_HEIGHT))
-        frames.append((image_to_rgb565(screen), ms))
-    return frames
+PANEL_HEIGHT = LCD_HEIGHT - FACE_HEIGHT
+ROW_BYTES = LCD_WIDTH * 2
+LINE_HEIGHT = 24
+PANEL_PAD = 8
+MAX_PANEL_LINES = 60
+# scroll pacing, in animation ticks (one tick per face frame, ~120ms)
+SCROLL_HOLD_TOP = 12
+SCROLL_HOLD_BOTTOM = 10
 
 
-def _text_panel(emotion, text):
-    from PIL import Image, ImageDraw
+def _scroll_step():
+    return max(1, config.get_int("JARVIS_TEXT_SCROLL_STEP", 2))
 
-    from .whisplay_app import _load_fonts
 
-    bg = style_bg(emotion)
-    panel = Image.new(
-        "RGB", (LCD_WIDTH, LCD_HEIGHT - FACE_HEIGHT),
-        tuple(min(255, c + 12) for c in bg),
-    )
-    draw = ImageDraw.Draw(panel)
-    _title_font, body_font = _load_fonts()
-    text = strip_emoji(text)
-    if not text:
-        return panel
-
-    max_width = LCD_WIDTH - 24
-    words = text.split()
+def _wrap_lines(draw, text, font, max_width):
     lines = []
     line = ""
-    for word in words:
+    for word in text.split():
         candidate = (line + " " + word).strip()
         try:
-            width = draw.textlength(candidate, font=body_font)
+            width = draw.textlength(candidate, font=font)
         except AttributeError:
-            width = body_font.getsize(candidate)[0]
+            width = font.getsize(candidate)[0]
         if width <= max_width:
             line = candidate
         else:
-            lines.append(line)
+            if line:
+                lines.append(line)
             line = word
-        if len(lines) >= 4:
+        if len(lines) >= MAX_PANEL_LINES:
             break
-    if line and len(lines) < 4:
+    if line and len(lines) < MAX_PANEL_LINES:
         lines.append(line)
-    if len(lines) == 4 and len(words) > sum(len(l.split()) for l in lines):
-        lines[-1] += " …"
-    y = 8
+    return lines
+
+
+def text_panel_strip(emotion, text):
+    """Render the FULL text as one tall RGB565 strip. The animator shows
+    a PANEL_HEIGHT window of it and scrolls the window down so long
+    answers can actually be read. Returns (rgb565_bytes, height_rows)."""
+    from PIL import Image, ImageDraw
+
+    from .whisplay_app import _load_fonts, image_to_rgb565
+
+    bg = tuple(min(255, c + 12) for c in style_bg(emotion))
+    text = strip_emoji(text)
+    probe = Image.new("RGB", (1, 1))
+    _title_font, body_font = _load_fonts()
+    lines = _wrap_lines(ImageDraw.Draw(probe), text, body_font,
+                        LCD_WIDTH - 24)
+    height = max(PANEL_HEIGHT, PANEL_PAD * 2 + len(lines) * LINE_HEIGHT)
+    panel = Image.new("RGB", (LCD_WIDTH, height), bg)
+    draw = ImageDraw.Draw(panel)
+    y = PANEL_PAD
     for row in lines:
         draw.text((12, y), row, fill=(235, 238, 242), font=body_font)
-        y += 24
-    return panel
+        y += LINE_HEIGHT
+    return image_to_rgb565(panel), height
+
+
+def compose_screen_frames(emotion, text=""):
+    """Full 240x280 frames (face + first page of the text panel). The
+    animator composes scrolling frames itself; this static version is
+    kept for previews and tests."""
+    strip, _height = text_panel_strip(emotion, text)
+    first_page = strip[: PANEL_HEIGHT * ROW_BYTES]
+    frames = []
+    for face, ms in build_face_frames(emotion):
+        from .whisplay_app import image_to_rgb565
+
+        frames.append((image_to_rgb565(face) + first_page, ms))
+    return frames
 
 
 def export_gif(emotion, path=None):
@@ -636,18 +646,33 @@ def gif_bytes(emotion):
 
 
 class Animator:
-    """Plays emotion animations through a blit(rgb565_bytes) callback."""
+    """Plays emotion animations through a blit(rgb565_bytes) callback.
+
+    Each tick pairs the next face frame with a window of the text strip;
+    when the text is taller than the panel, the window scrolls down at
+    reading pace (hold at top, scroll, hold at bottom, loop) so the
+    whole answer can be read on the LCD."""
 
     def __init__(self, blit):
         self.blit = blit
         self._lock = threading.Lock()
         self._current = None  # (emotion, text)
-        self._frames = []
+        self._entry = None
         self._cache = {}
         self._running = True
         self._wake = threading.Event()
         self._thread = threading.Thread(target=self._loop, daemon=True)
         self._thread.start()
+
+    def _build_entry(self, emotion, text):
+        from .whisplay_app import image_to_rgb565
+
+        faces = [
+            (image_to_rgb565(face), ms)
+            for face, ms in build_face_frames(emotion)
+        ]
+        strip, strip_h = text_panel_strip(emotion, text)
+        return {"faces": faces, "strip": strip, "strip_h": strip_h}
 
     def play(self, emotion, text=""):
         key = (emotion, text)
@@ -657,9 +682,9 @@ class Animator:
             if key not in self._cache:
                 if len(self._cache) > 24:
                     self._cache.clear()
-                self._cache[key] = compose_screen_frames(emotion, text)
+                self._cache[key] = self._build_entry(emotion, text)
             self._current = key
-            self._frames = self._cache[key]
+            self._entry = self._cache[key]
         self._wake.set()
 
     def stop(self):
@@ -667,25 +692,51 @@ class Animator:
         self._wake.set()
 
     def _loop(self):
-        index = 0
+        face_i = 0
+        scroll = 0
+        hold_top = SCROLL_HOLD_TOP
+        hold_bottom = SCROLL_HOLD_BOTTOM
         while self._running:
             with self._lock:
-                frames = self._frames
+                entry = self._entry
                 key = self._current
-            if not frames:
+            if not entry:
                 self._wake.wait(0.2)
                 self._wake.clear()
                 continue
-            index = index % len(frames)
-            data, ms = frames[index]
+
+            faces = entry["faces"]
+            face_i %= len(faces)
+            face_bytes, ms = faces[face_i]
+            window = entry["strip"][
+                scroll * ROW_BYTES: (scroll + PANEL_HEIGHT) * ROW_BYTES
+            ]
             try:
-                self.blit(data)
+                self.blit(face_bytes + window)
             except Exception:
                 pass
-            index += 1
+            face_i += 1
+
+            # advance the text scroll
+            max_scroll = entry["strip_h"] - PANEL_HEIGHT
+            if max_scroll > 0:
+                if hold_top > 0:
+                    hold_top -= 1
+                elif scroll < max_scroll:
+                    scroll = min(max_scroll, scroll + _scroll_step())
+                elif hold_bottom > 0:
+                    hold_bottom -= 1
+                else:
+                    scroll = 0
+                    hold_top = SCROLL_HOLD_TOP
+                    hold_bottom = SCROLL_HOLD_BOTTOM
+
             self._wake.wait(ms / 1000.0)
             if self._wake.is_set():
                 self._wake.clear()
                 with self._lock:
                     if self._current != key:
-                        index = 0
+                        face_i = 0
+                        scroll = 0
+                        hold_top = SCROLL_HOLD_TOP
+                        hold_bottom = SCROLL_HOLD_BOTTOM

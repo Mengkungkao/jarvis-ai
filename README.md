@@ -187,7 +187,13 @@ eyes on a black screen in the style of the EMO desktop robot, with
 blinks, crescent smiles, heart eyes, and listening equalizer bars — or
 **classic** round smiley faces. After each reply a reaction face
 (**happy / sad / surprised / love / angry**) is picked from emoji or
-sentiment words in the answer. Emoji are stripped before TTS so they are
+sentiment words in the answer.
+
+The text panel below the face **scrolls** to show the full recognized
+speech or full answer, not just the first few lines: it holds at the
+top briefly, scrolls smoothly to the bottom, holds there, then loops.
+Speed is tunable with `JARVIS_TEXT_SCROLL_STEP` in `.env`. The face
+keeps animating independently above the scrolling text. Emoji are stripped before TTS so they are
 never read aloud. All faces are drawn procedurally (no assets); replace
 any of them with your own GIF at `emotions/<state>.gif` — see
 [emotions/README.md](emotions/README.md).
