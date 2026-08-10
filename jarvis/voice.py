@@ -50,16 +50,44 @@ def _wav_stats(wav_path):
 RECORD_ARGS = ["-f", "S16_LE", "-r", "16000", "-c", "1", "-t", "wav"]
 
 
+def _daemon_service_active():
+    try:
+        return subprocess.run(
+            ["systemctl", "is-active", "--quiet", "whisplay-daemon"],
+            timeout=5,
+        ).returncode == 0
+    except Exception:
+        return False
+
+
 def _load_hardware():
     """Preferred: run as a whisplay-daemon foreground app. Fallbacks:
-    direct WhisplayBoard access, then plain terminal."""
+    direct WhisplayBoard access, then plain terminal.
+
+    Safety: if the whisplay-daemon *service* is active but its socket is
+    not answering, do NOT grab the hardware directly — two owners fighting
+    over GPIO blanks the screen and wedges the daemon. Set
+    JARVIS_FORCE_DIRECT_HW=true to override."""
     if whisplay_app.daemon_available():
         try:
             app = whisplay_app.DaemonApp()
             app.start()
             return app, "daemon"
         except Exception as err:
-            print("[voice] daemon mode failed (%s), trying direct access" % err)
+            print("[voice] daemon mode failed (%s)" % err)
+    if _daemon_service_active() and not config.get_bool(
+        "JARVIS_FORCE_DIRECT_HW", False
+    ):
+        print(
+            "[voice] whisplay-daemon service is active but its socket is "
+            "not responding — refusing direct hardware access to avoid a "
+            "GPIO conflict.\n"
+            "[voice] fix the daemon first: sudo systemctl restart "
+            "whisplay-daemon\n"
+            "[voice] (or stop it: sudo systemctl stop whisplay-daemon — "
+            "or set JARVIS_FORCE_DIRECT_HW=true to override)"
+        )
+        return None, "terminal"
     board = _load_whisplay_board()
     if board is not None:
         return board, "direct"
