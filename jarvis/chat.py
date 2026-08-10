@@ -38,7 +38,9 @@ def resolve_backend():
 
 class ChatSession:
     def __init__(self, backend=None, quiet=False, tracer=None):
-        self.backend = backend or resolve_backend()
+        if backend in (None, "", "auto"):
+            backend = resolve_backend()
+        self.backend = backend
         self.quiet = quiet
         self.trace = tracer or trace.default
         self.llm = None

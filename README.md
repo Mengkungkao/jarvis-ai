@@ -220,6 +220,22 @@ documented there). The important ones:
 - `CHAT_HISTORY_RESET_SEC` — fresh conversation after idle (default 300)
 - `SYSTEM_PROMPT` — persona override
 
+## Validating the project
+
+```bash
+bash tests/validate.sh
+```
+
+Runs the full self-check (28 checks): training pipeline (index /
+incremental / re-index / cleanup), retrieval, all three brains with
+auto-fallback, LLM tools, speech pipeline (level meter + real vosk
+English recognition against a reference recording), emotions, every
+debug-console endpoint, and the whisplay daemon-app lifecycle against a
+mock daemon ([tests/mock_daemon.py](tests/mock_daemon.py)). Checks whose
+prerequisites are missing on the machine (Ollama server, vosk model, PIL)
+are reported as SKIP, so the same script works on the dev box and on the
+Pi. Reference assets are cached in `~/.cache/jarvis-tests/`.
+
 ## Project layout
 
 ```
