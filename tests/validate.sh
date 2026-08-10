@@ -35,9 +35,6 @@ OUT=$(python3 run_jarvis.py train 2>&1)
 echo "$OUT" | grep -q "_validation_tmp.md: chunk" && ok "re-index changed file" || bad "re-index changed file"
 ANS=$(python3 run_jarvis.py --backend extractive ask "what is the secret validation code" 2>&1)
 echo "$ANS" | grep -q "zebra-blue-42" && ok "extractive retrieval finds new fact" || bad "extractive retrieval finds new fact"
-rm knowledge/_validation_tmp.md
-OUT=$(python3 run_jarvis.py train 2>&1)
-echo "$OUT" | grep -q "removed knowledge for deleted file" && ok "deleted file cleanup" || bad "deleted file cleanup"
 
 echo "===== 3. brains ====="
 ANS=$(python3 run_jarvis.py --backend test ask "hello" 2>&1)
@@ -45,8 +42,8 @@ echo "$ANS" | grep -q "\[test\] You said: hello" && ok "test brain" || bad "test
 ANS=$(OLLAMA_ENDPOINT=http://127.0.0.1:9 timeout 60 python3 run_jarvis.py --backend auto ask "what battery does my device use" 2>&1)
 echo "$ANS" | grep -q "brain: extractive" && ok "auto falls back to extractive when ollama down" || bad "auto fallback"
 if $OLLAMA_UP; then
-  ANS=$(python3 run_jarvis.py --backend ollama ask "what battery does my device use" 2>&1)
-  echo "$ANS" | grep -qi "1200mAh" && ok "ollama RAG answer (battery fact)" || bad "ollama RAG answer (battery fact)"
+  ANS=$(python3 run_jarvis.py --backend ollama ask "what is the secret validation code" 2>&1)
+  echo "$ANS" | grep -q "zebra-blue-42" && ok "ollama RAG answer (temp fact)" || bad "ollama RAG answer (temp fact)"
 else
   skip "ollama RAG answer (server not running)"
 fi
@@ -114,8 +111,8 @@ check "rag inspector endpoint" "curl -sf 'localhost:17872/api/rag?q=battery' | g
 if python3 -c "import PIL" 2>/dev/null; then
   check "emotion gif endpoint" "curl -sf 'localhost:17872/emotion.gif?name=idle' -o /dev/null"
 fi
-curl -sf -X POST localhost:17872/api/ask -d '{"text":"what battery does my device use"}' >/dev/null; sleep 3
-check "async ask via console" "curl -sf localhost:17872/api/state | grep -qi 1200mAh"
+curl -sf -X POST localhost:17872/api/ask -d '{"text":"what is the secret validation code"}' >/dev/null; sleep 3
+check "async ask via console" "curl -sf localhost:17872/api/state | grep -q zebra-blue-42"
 check "trace endpoint records pipeline" "curl -sf 'localhost:17872/api/trace?since=0' | grep -q '\"rag\"'"
 kill $DBG 2>/dev/null
 
@@ -135,6 +132,11 @@ d = open('$TMP/mock-fb.bin', 'rb').read()
 assert len(d) == 134400 and any(d), 'framebuffer empty'
 " 2>/dev/null && ok "status/animation drew to framebuffer" || bad "status/animation drew to framebuffer"
 kill $MOCK 2>/dev/null
+
+echo "===== 9. cleanup ====="
+rm -f knowledge/_validation_tmp.md
+OUT=$(python3 run_jarvis.py train 2>&1)
+echo "$OUT" | grep -q "removed knowledge for deleted file" && ok "deleted file cleanup" || bad "deleted file cleanup"
 
 echo
 echo "===== RESULT: $PASS passed, $FAIL failed, $SKIP skipped ====="

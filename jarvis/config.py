@@ -145,7 +145,7 @@ def rag_enabled():
 
 
 def rag_top_k():
-    return get_int("RAG_TOP_K", 3)
+    return get_int("RAG_TOP_K", 4)
 
 
 def rag_score_threshold(embed_signature=""):
@@ -173,6 +173,13 @@ def chunk_overlap():
 def face_style():
     """emo (big glowing eyes, EMO-robot style) | classic (round smiley)"""
     return get("JARVIS_FACE_STYLE", "emo").strip().lower()
+
+
+def face_scale():
+    """Size of the emo face inside its bezel box (0.4-1.0).
+    Below 1.0 the face is drawn smaller inside a rounded screen box;
+    1.0 fills the whole face area with no box."""
+    return min(1.0, max(0.4, get_float("JARVIS_FACE_SCALE", 0.75)))
 
 
 def memory_enabled():

@@ -125,11 +125,17 @@ class ChatSession:
     def _rag_context(self, query):
         """Search once; feed both the trace and the injected context."""
         try:
-            results = knowledge.search(query, store=self.store)
+            results = knowledge.search(
+                query, top_k=config.rag_top_k() * 2, store=self.store
+            )
         except Exception as err:
             self.trace.emit("rag", query=query, error=str(err))
             return ""
         threshold = knowledge.score_threshold(self.store)
+        kept = knowledge.select_results(
+            results, threshold, config.rag_top_k()
+        )
+        kept_ids = {id(r) for r in kept}
         self.trace.emit(
             "rag",
             query=query,
@@ -138,13 +144,13 @@ class ChatSession:
                 {
                     "score": round(r["score"], 3),
                     "source": r["payload"].get("source", "?"),
-                    "used": r["score"] >= threshold,
+                    "used": id(r) in kept_ids,
                     "content": r["payload"].get("content", "")[:200],
                 }
                 for r in results
             ],
         )
-        return knowledge.context_from_results(results, threshold)
+        return knowledge.context_from_results(kept, threshold)
 
     # ── ollama/test agent loop ───────────────────────────────────
     def _run_llm(self, on_content, on_thinking, on_tool, round_index,
@@ -279,11 +285,17 @@ class ChatSession:
     # ── extractive brain (no LLM, Pi Zero 2W friendly) ───────────
     def _extractive_answer(self, text):
         try:
-            results = knowledge.search(text, store=self.store)
+            results = knowledge.search(
+                text, top_k=config.rag_top_k() * 2, store=self.store
+            )
         except Exception as err:
             self.trace.emit("rag", query=text, error=str(err))
             return "Knowledge search failed: %s" % err
         threshold = knowledge.score_threshold(self.store)
+        kept = knowledge.select_results(
+            results, threshold, config.rag_top_k()
+        )
+        kept_ids = {id(r) for r in kept}
         self.trace.emit(
             "rag",
             query=text,
@@ -292,13 +304,12 @@ class ChatSession:
                 {
                     "score": round(r["score"], 3),
                     "source": r["payload"].get("source", "?"),
-                    "used": r["score"] >= threshold,
+                    "used": id(r) in kept_ids,
                     "content": r["payload"].get("content", "")[:200],
                 }
                 for r in results
             ],
         )
-        kept = [r for r in results if r["score"] >= threshold]
         if not kept:
             hints = []
             skill_names = [s["name"] for s in skills.discover()]

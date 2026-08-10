@@ -137,15 +137,41 @@ def knowledge_context(query, store=None):
     system prompt — the getSystemPromptWithKnowledge() equivalent."""
     store = store or open_store()
     try:
-        results = search(query, store=store)
+        results = search(query, top_k=config.rag_top_k() * 2, store=store)
     except Exception as err:
         print("[RAG] knowledge search failed: %s" % err)
         return ""
-    return context_from_results(results, score_threshold(store))
+    return context_from_results(
+        results, score_threshold(store), config.rag_top_k()
+    )
 
 
-def context_from_results(results, threshold):
-    kept = [r for r in results if r["score"] >= threshold]
+MAX_CHUNKS_PER_SOURCE = 2
+
+
+def select_results(results, threshold, limit=None):
+    """Filter search results for context building: drop scores below the
+    threshold and keep at most MAX_CHUNKS_PER_SOURCE per file — in a
+    grown knowledge base one topic-heavy file otherwise crowds every
+    other source out of the context. Callers over-fetch (top_k * 2) and
+    pass limit=top_k so capped slots are refilled from other sources."""
+    kept = []
+    per_source = {}
+    for r in results:
+        if r["score"] < threshold:
+            continue
+        source = r["payload"].get("source", "?")
+        if per_source.get(source, 0) >= MAX_CHUNKS_PER_SOURCE:
+            continue
+        per_source[source] = per_source.get(source, 0) + 1
+        kept.append(r)
+        if limit is not None and len(kept) >= limit:
+            break
+    return kept
+
+
+def context_from_results(results, threshold, limit=None):
+    kept = select_results(results, threshold, limit)
     if not kept:
         return ""
     parts = []

@@ -2,10 +2,13 @@
 
 Two built-in face styles, chosen with `JARVIS_FACE_STYLE` in `.env`:
 
-- **emo** (default) — big glowing eyes on a black screen, EMO-robot
-  style: everything is expressed through eye shape and motion (blinks,
-  crescent smiles, heart eyes, droopy tear, equalizer bars while
-  listening, flickering X eyes on error).
+- **emo** (default) — glowing eyes on a black screen, EMO-robot style:
+  everything is expressed through eye shape and motion (blinks, crescent
+  smiles, heart eyes, droopy tear, equalizer bars while listening,
+  flickering X eyes on error). The face sits inside a small rounded
+  screen box whose outline matches the emotion color; size it with
+  `JARVIS_FACE_SCALE` (default 0.75, set 1.0 for a full-screen face
+  with no box).
 - **classic** — round smiley faces with colored backgrounds.
 
 Preview both live in the browser with `./jarvis-cli debug`.

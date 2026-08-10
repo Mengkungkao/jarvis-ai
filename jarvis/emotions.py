@@ -268,6 +268,7 @@ def _heart(draw, x, y, size, color):
 
 # ── EMO-style face: big glowing eyes on a near-black screen ──────────
 EMO_BG = (6, 8, 14)
+BOX_FILL = (13, 17, 27)  # interior of the little screen bezel
 EMO_COLORS = {
     "idle": (95, 225, 255),
     "listening": (120, 255, 205),
@@ -282,14 +283,14 @@ EMO_COLORS = {
 }
 
 
-def _emo_frame(emotion, phase):
+def _emo_frame(emotion, phase, bg=EMO_BG):
     """One EMO-style frame: everything is said with two glowing eyes."""
     import math
 
     from PIL import Image, ImageDraw, ImageFilter
 
     color = EMO_COLORS.get(emotion, EMO_COLORS["idle"])
-    frame = Image.new("RGB", (LCD_WIDTH, FACE_HEIGHT), EMO_BG)
+    frame = Image.new("RGB", (LCD_WIDTH, FACE_HEIGHT), bg)
     mask = Image.new("L", (LCD_WIDTH, FACE_HEIGHT), 0)
     draw = ImageDraw.Draw(mask)
 
@@ -457,19 +458,58 @@ def style_bg(emotion):
     return EMO_BG
 
 
+def _box_frame(inner, emotion):
+    """Shrink a face frame into a rounded screen-bezel box, EMO style."""
+    from PIL import Image, ImageDraw
+
+    scale = config.face_scale()
+    frame = Image.new("RGB", (LCD_WIDTH, FACE_HEIGHT), EMO_BG)
+    box_w = int(LCD_WIDTH * scale)
+    box_h = int(FACE_HEIGHT * scale)
+    bx = (LCD_WIDTH - box_w) // 2
+    by = (FACE_HEIGHT - box_h) // 2
+    color = EMO_COLORS.get(emotion, EMO_COLORS["idle"])
+    draw = ImageDraw.Draw(frame)
+    draw.rounded_rectangle(
+        (bx, by, bx + box_w, by + box_h), radius=14, fill=BOX_FILL
+    )
+    inset = 4
+    small = inner.resize(
+        (box_w - 2 * inset, box_h - 2 * inset), Image.LANCZOS
+    )
+    frame.paste(small, (bx + inset, by + inset))
+    draw.rounded_rectangle(
+        (bx, by, bx + box_w, by + box_h), radius=14,
+        outline=tuple(c // 2 for c in color), width=2,
+    )
+    return frame
+
+
 def build_face_frames(emotion):
     """[(PIL face image, duration_ms)] — custom GIF override wins."""
+    emo_style = config.face_style() != "classic"
+    boxed = emo_style and config.face_scale() < 1.0
     custom = os.path.join(emotions_dir(), "%s.gif" % emotion)
+    frames = None
     if os.path.isfile(custom):
         frames = _load_gif_frames(custom, emotion)
-        if frames:
-            return frames
-    count = FRAME_COUNTS.get(emotion, DEFAULT_FRAMES)
-    ms = FRAME_MS.get(emotion, DEFAULT_FRAME_MS)
-    render = _face_frame if config.face_style() == "classic" else _emo_frame
-    return [
-        (render(emotion, i / float(count)), ms) for i in range(count)
-    ]
+    if frames is None or not frames:
+        count = FRAME_COUNTS.get(emotion, DEFAULT_FRAMES)
+        ms = FRAME_MS.get(emotion, DEFAULT_FRAME_MS)
+        if emo_style:
+            bg = BOX_FILL if boxed else EMO_BG
+            frames = [
+                (_emo_frame(emotion, i / float(count), bg=bg), ms)
+                for i in range(count)
+            ]
+        else:
+            frames = [
+                (_face_frame(emotion, i / float(count)), ms)
+                for i in range(count)
+            ]
+    if boxed:
+        frames = [(_box_frame(face, emotion), ms) for face, ms in frames]
+    return frames
 
 
 def _load_gif_frames(path, emotion):
